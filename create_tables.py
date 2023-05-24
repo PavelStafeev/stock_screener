@@ -5,6 +5,8 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 import time
 import json
+from bs4 import BeautifulSoup
+import lxml
 
 # Get today date and two years ago date, needed for further tasks
 today = date.today()
@@ -74,6 +76,24 @@ try:
 except Exception as ex_e:
     print ("[Info] error occured while working to database:", ex_e)
 
+# Web scrapping of tickeres included in Nasdaq 100
+headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.5672.64 Safari/537.36'}
+
+list_of_endpoints = ["", "&r=21", "&r=41", "&r=61", "&r=81"]
+list_of_tickers = []
+sleep_period = 0
+for i in list_of_endpoints:
+    file_to_parse = requests.get(f"https://finviz.com/screener.ashx?v=111&f=exch_nasd,geo_usa,idx_ndx{i}", headers=headers).text
+    soup = BeautifulSoup(file_to_parse, "lxml")
+    lines_tr_full = soup.find_all("tr", valign = "top")
+    for lines_tr in lines_tr_full:
+        lines_td = lines_tr.find("td", align = "left").a.text
+        list_of_tickers.append(lines_td)
+    sleep_period+=2
+    time.sleep(sleep_period) 
+df = pd.DataFrame(list_of_tickers, columns=["ticker"])
+df.to_sql("tickers", engine, if_exists="append", index=False)
+
 # Get from database the list of all tickers 
 try:
     with connection.cursor() as cursor:
@@ -83,6 +103,37 @@ except Exception as exc:
     print (f"INFO: Exception occured while woring to database {exc}")
 
 alltickers2 = [i[0] for i in alltickers]
+
+# Get metrics for all the tickers
+list_of_metrics = []
+tickers_for_list_of_metrics = []
+names_for_list_of_metrics = []
+for ticker in alltickers2:
+    file_to_parse = requests.get(f"https://finviz.com/quote.ashx?t={ticker}&p=d", headers=headers).text
+    soup = BeautifulSoup(file_to_parse, "lxml")
+    lines_tr_full = soup.find_all("td", class_ = "snapshot-td2")
+    for i in lines_tr_full:
+        tickers_for_list_of_metrics.append(ticker)
+        list_of_metrics.append(i.find("b").text)
+    lines_tr_full = soup.find_all("td", class_ = "snapshot-td2-cp")
+    for i in lines_tr_full:
+        names_for_list_of_metrics.append(i.text)
+    time.sleep(3)
+
+# Get capitalization info without "B" at the end of each string
+cap_list = []
+tickers_for_cap_list = []
+for i in range(6, len(list_of_metrics), 72):
+    cap_list.append(list_of_metrics[i][:-1])
+for i in range(6, len(tickers_for_list_of_metrics),72):
+    tickers_for_cap_list.append(tickers_for_list_of_metrics[i])
+
+# Add metrics to database
+df = pd.DataFrame({'ticker':tickers_for_cap_list, 'market_cap':cap_list})
+df.to_sql("market_cap", engine, if_exists="append", index=False)
+
+df = pd.DataFrame({'ticker':tickers_for_list_of_metrics, 'metrics':list_of_metrics, 'name':names_for_list_of_metrics})
+df.to_sql("metrics_fin", engine, if_exists="append", index=False)
 
 # This is API request for getting Aggregates(bars). Link: https://polygon.io/docs/stocks/get_v2_aggs_ticker__stocksticker__range__multiplier___timespan___from___to
 
@@ -145,6 +196,24 @@ df = pd.DataFrame({"ticker":mylist[0], 'fiscal_year':mylist[1], "value":mylist[2
 df2 = pd.DataFrame(empty_tickers, columns=["empty_stock_financials"])
 df.to_sql("stock_financials", engine, if_exists="append", index=False) #paste in database
 df2.to_sql("empty_stock_financials", engine, if_exists="append", index=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 if connection:
